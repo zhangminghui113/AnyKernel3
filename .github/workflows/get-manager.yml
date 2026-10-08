@@ -57,9 +57,9 @@ jobs:
           if [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
             echo "This is the SukiSU variant"
             git clone https://github.com/SukiSU-Ultra/SukiSU-Ultra.git KernelSU
-          elif [ "${{ inputs.kernelsu_variant }}" == "ReSukiSU" ]; then
-            echo "This is the ReSukiSU variant"
-            git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+          elif [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
+            echo "This is the BakaSU variant"
+            git clone https://github.com/Baka-SU/BakaSU.git KernelSU
           else
             echo "Unknown variant"
             exit 1
@@ -95,9 +95,9 @@ jobs:
             echo "SukiSU..."
             REPO="SukiSU-Ultra/SukiSU-Ultra"
             KSUM="manager"
-          elif [ "${{ inputs.kernelsu_variant }}" == "ReSukiSU" ]; then
-            echo "ReSukiSU..."
-            REPO="ReSukiSU/ReSukiSU"
+          elif [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
+            echo "BakaSU..."
+            REPO="Baka-SU/BakaSU"
             KSUM="manager"
           fi
 
@@ -105,7 +105,7 @@ jobs:
 
           get_manager_artifacts() {
             local artifacts="$1"
-            if [ "${{ inputs.kernelsu_variant }}" == "ReSukiSU" ]; then
+            if [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
               printf '%s' "$artifacts" | jq -r \
                 '.artifacts[] | select(.name == "Manager-release" or .name == "Spoofed-Manager-release") | "\(.name)\t\(.archive_download_url)"'
             else
@@ -114,7 +114,7 @@ jobs:
             fi
           }
 
-          # 仿 ReSukiSU_CI：只拉取官方 main 分支最新上传（push）的 Manager 构建，
+          # 仿 BakaSU_CI：只拉取官方 main 分支最新上传（push）的 Manager 构建，
           # 并以下载到的 APK 文件名实测 versionCode 命名，确保包名与包内容严格一致
           # 注意：runs 列表 API 的排序/缓存在部分仓库不可靠（可能漏掉最新构建），
           # 而 created 日期过滤参数走可靠查询路径，因此按日期窗口从今天往回推进检索
@@ -195,7 +195,7 @@ jobs:
             done <<< "$CANDIDATE_LIST"
 
             # 从 APK 文件名提取实测 versionCode 作为 artifact 命名
-            # 优先 arm64-v8a release（ReSukiSU 下游只保留这一个 ABI）
+            # 优先 arm64-v8a release（BakaSU 下游只保留这一个 ABI）
             APK_FILE=$(find manager-artifacts -type f -name "*-arm64-v8a-release.apk" | head -n 1)
             if [ -z "$APK_FILE" ]; then
               APK_FILE=$(find manager-artifacts -type f -name "*release.apk" ! -name "*debug*" | head -n 1)
@@ -224,8 +224,8 @@ jobs:
             exit 1
           fi
           echo "选择 Manager 构建 $MANAGER_BUILD_ID (main, ${MANAGER_HEAD_SHA:0:8}), APK 实测版本 $MANAGER_VERSION"
-          if [ "${{ inputs.kernelsu_variant }}" == "ReSukiSU" ]; then
-            # ReSukiSU 内核侧将检出到该构建的同一提交（与拉取的安装包严格同源），
+          if [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
+            # BakaSU 内核侧将检出到该构建的同一提交（与拉取的安装包严格同源），
             # 因此对比"该提交对应的 KSU 版本"而非 main HEAD 的版本
             PIN_COUNT=$(git -C KernelSU rev-list --count "$MANAGER_HEAD_SHA" 2>/dev/null || echo "")
             if [ -n "$PIN_COUNT" ]; then
@@ -244,12 +244,12 @@ jobs:
           echo "managerVer=$MANAGER_VERSION" >> $GITHUB_OUTPUT
           echo "ksuCommit=$MANAGER_HEAD_SHA" >> $GITHUB_OUTPUT
 
-          if [ "${{ inputs.kernelsu_variant }}" == "ReSukiSU" ]; then
-            echo "仅保留 ReSukiSU arm64-v8a release 管理器..."
+          if [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
+            echo "仅保留 BakaSU arm64-v8a release 管理器..."
             find manager-artifacts -type f -name "*.apk" ! -name "*-arm64-v8a-release.apk" -delete
             find manager-artifacts -type f -name "*debug*.apk" -delete
             if ! find manager-artifacts -type f -name "*-arm64-v8a-release.apk" | grep -q .; then
-              echo "未找到 ReSukiSU arm64-v8a release 管理器。"
+              echo "未找到 BakaSU arm64-v8a release 管理器。"
               exit 1
             fi
             find manager-artifacts -type f -name "*.apk" -print

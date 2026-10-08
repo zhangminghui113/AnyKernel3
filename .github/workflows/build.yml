@@ -31,7 +31,7 @@ on:
         required: true
         type: string
       ksu_commit:
-        description: "ReSukiSU 专用：KernelSU 检出到该提交以对齐官方最新上传构建（留空跟随 main HEAD）"
+        description: "BakaSU 专用：KernelSU 检出到该提交以对齐官方最新上传构建（留空跟随 main HEAD）"
         required: false
         type: string
         default: ""
@@ -432,7 +432,7 @@ jobs:
           variant_input="${{ inputs.ksu_variant }}"
 
           case "$variant_input" in
-            "ReSukiSU")
+            "BakaSU")
               BRANCH="-s main"
               ;;
             "SukiSU")
@@ -475,9 +475,9 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash $BRANCH
               bash "$GITHUB_WORKSPACE/scripts/ksu_post_setup.sh" KernelSU sukisu
               ;;
-            "ReSukiSU")
-              echo "添加 ReSukiSU..."
-              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash $BRANCH
+            "BakaSU")
+              echo "添加 BakaSU..."
+              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash $BRANCH
               # 内核侧 KernelSU 检出到官方最新上传 Manager 构建的同一提交
               #（Kbuild 以 30700 + git 提交数 计算版本，与官方管理器 versionCode 同源同值），
               # 保证内核 KSU 版本与拉取的管理器安装包严格一致
@@ -492,7 +492,7 @@ jobs:
                 fi
                 echo "KernelSU 已检出到官方上传构建提交 $KSU_COMMIT (KSU 版本 $((30700 + $(git -C KernelSU rev-list --count HEAD))))"
               fi
-              bash "$GITHUB_WORKSPACE/scripts/ksu_post_setup.sh" KernelSU resukisu
+              bash "$GITHUB_WORKSPACE/scripts/ksu_post_setup.sh" KernelSU bakasu
               ;;
             *)
               echo "未知变体: ${{ inputs.ksu_variant }}" >&2
@@ -508,13 +508,15 @@ jobs:
           fi
 
       # SukiSU 的 builtin 分支（内建+SUSFS 产品线）与 main 分支相互独立，
-      # UAPI 版本落后于官方管理器（管理器按 main 分支构建，UAPI 4）。
-      # 内核 UAPI < 管理 UAPI 时，管理器首页会误报"需要更新内核"。
-      # 此步骤把官方 main 的 UAPI 2->4 内核侧提交移植到 builtin 检出：
-      #   - 86e9b3bf: scoped su-session driver fd (UAPI 3)
-      #   - dda78702: KSU_GET_INFO_FLAG_BUNDLED (UAPI 4, 仅 UAPI 号+flag 常量,
-      #     其 MODULE 部分依赖 builtin 不存在的 ksu_bundled，内建编译不参与)
-      # 若上游 builtin 日后自行同步 UAPI >= 4，本步骤自动跳过。
+      # UAPI 版本落后于官方管理器（管理器按 main 分支构建，UAPI 5）。
+      # 内核 UAPI < 管理 UAPI 时，管理器 requiresNewKernel = true，
+      # 首页报"需要更新内核"（Natives.kt: managerUAPIVersion > kernelUAPIVersion）。
+      # 此步骤把官方 main 的 UAPI 2->5 常量移植到 builtin 检出：
+      #   - UAPI 3/4: su-session fd + KSU_GET_INFO_FLAG_BUNDLED
+      #   - UAPI 5:   EVENT_SERVICES（内核侧 dispatch.c 已随 70fa0e092
+      #     同步进来，仅缺常量定义，由 sukisu_compat/builtin-sync-fixes.patch
+      #     在后续步骤补齐）
+      # 若上游同步 UAPI >= 5 则本步骤自动跳过。
       - name: 同步 SukiSU 内核 UAPI 版本（对齐官方管理器）
         if: inputs.ksu_variant == 'SukiSU'
         working-directory: ${{ env.KERNEL_ROOT }}
@@ -539,19 +541,19 @@ jobs:
           CURRENT_UAPI=$(read_uapi)
           echo "builtin 分支当前 UAPI 版本: ${CURRENT_UAPI:-未知}"
 
-          if [ "${CURRENT_UAPI:-0}" -ge 4 ]; then
-            echo "上游已包含 UAPI >= 4，跳过本地对齐补丁"
+          if [ "${CURRENT_UAPI:-0}" -ge 5 ]; then
+            echo "上游已包含 UAPI >= 5，跳过本地对齐补丁"
           else
             if ! patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi4.patch"; then
               echo "::error::UAPI 对齐补丁应用失败：builtin 分支 supercall 代码可能已更新，请重新生成 scripts/ksu_uapi_sync/builtin-uapi4.patch"
               exit 1
             fi
-            echo "已应用 UAPI 4 对齐补丁 (su-session fd + FLAG_BUNDLED)"
+            echo "已应用 UAPI 5 对齐补丁 (UAPI 号 2->5 + FLAG_BUNDLED/EVENT_SERVICES 常量)"
           fi
 
           FINAL_UAPI=$(read_uapi)
-          if [ "${FINAL_UAPI:-0}" -ne 4 ]; then
-            echo "::error::UAPI 版本校验失败（期望 4，实际 ${FINAL_UAPI:-未知}）"
+          if [ "${FINAL_UAPI:-0}" -ne 5 ]; then
+            echo "::error::UAPI 版本校验失败（期望 5，实际 ${FINAL_UAPI:-未知}）"
             exit 1
           fi
           if ! grep -q "ksu_install_su_fd" KernelSU/kernel/supercall/supercall.c; then
@@ -1202,7 +1204,13 @@ jobs:
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
 
-          if [ "${{ inputs.ksu_variant }}" == "SukiSU" ] || [ "${{ inputs.ksu_variant }}" == "ReSukiSU" ]; then
+          # BakaSU 上游改名后 Kconfig 默认值去掉了 @%REPO_NAME%，显式加回模板，
+          # 配合 ksu_post_setup.sh 的 REPO_NAME := LingLuo 改写，管理器才能显示 @LingLuo 后缀
+          if [ "${{ inputs.ksu_variant }}" == "BakaSU" ]; then
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@%REPO_NAME%"' >> "$DEFCONFIG"
+          fi
+
+          if [ "${{ inputs.ksu_variant }}" == "SukiSU" ] || [ "${{ inputs.ksu_variant }}" == "BakaSU" ]; then
             if [[ "${{ inputs.use_kpm }}" == enabled* ]] || [[ "${{ inputs.use_kpm }}" == patched* ]]; then
               if grep -RqsE '^[[:space:]]*config[[:space:]]+KPM([[:space:]]|$)' common KernelSU 2>/dev/null; then
                 echo "CONFIG_KPM=y" >> "$DEFCONFIG"
@@ -1224,12 +1232,12 @@ jobs:
           if [[ ! "$CURRENT_SUB" =~ ^[0-9]+$ ]]; then
             CURRENT_SUB=99999
           fi
-          if [[ "${{ inputs.ksu_variant }}" == "ReSukiSU" && "${{ inputs.android_version }}" == "android13" && "${{ inputs.kernel_version }}" == "5.15" && "$CURRENT_SUB" -ge 74 && "$CURRENT_SUB" -le 137 ]]; then
+          if [[ "${{ inputs.ksu_variant }}" == "BakaSU" && "${{ inputs.android_version }}" == "android13" && "${{ inputs.kernel_version }}" == "5.15" && "$CURRENT_SUB" -ge 74 && "$CURRENT_SUB" -le 137 ]]; then
             {
               echo "CONFIG_KALLSYMS=y"
               echo "CONFIG_KALLSYMS_ALL=y"
             } >> "$DEFCONFIG"
-            # 修复 5.15.74~5.15.137: kallsyms_on_each_symbol 仅在 LIVEPATCH 下编译，导致 ReSukiSU 链接失败
+            # 修复 5.15.74~5.15.137: kallsyms_on_each_symbol 仅在 LIVEPATCH 下编译，导致 BakaSU 链接失败
             KALLSYMS_C="./common/kernel/kallsyms.c"
             if [ -f "$KALLSYMS_C" ] \
               && grep -qF 'int kallsyms_on_each_symbol' "$KALLSYMS_C" \
@@ -1465,7 +1473,7 @@ jobs:
           compression-level: 9
 
       - name: 应用 KPM 补丁（构建期修补 Image）
-        if: startsWith(inputs.use_kpm, 'patched') && (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'ReSukiSU')
+        if: startsWith(inputs.use_kpm, 'patched') && (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'BakaSU')
         run: |
           set -e
           if [ "${{ inputs.android_version }}" == "android12" ] || [ "${{ inputs.android_version }}" == "android13" ]; then

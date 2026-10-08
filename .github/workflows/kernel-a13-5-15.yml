@@ -13,8 +13,8 @@ on:
         type: choice
         options:
           - SukiSU
-          - ReSukiSU
-        default: ReSukiSU
+          - BakaSU
+        default: BakaSU
       version:
         description: "自定义版本名 (可选)"
         required: false

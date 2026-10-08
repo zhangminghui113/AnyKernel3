@@ -2,13 +2,13 @@
 
 # GKI KernelSU SUSFS
 
-**Automated GKI Kernel Builds | SukiSU / ReSukiSU + SUSFS Integration**
+**Automated GKI Kernel Builds | SukiSU / BakaSU + SUSFS Integration**
 
 [![Release](https://img.shields.io/github/v/release/LingLuo17/AnyKernel3?label=Release&style=flat-square&logo=github&logoColor=white&color=2ea44f)](https://github.com/LingLuo17/AnyKernel3/releases)
 [![Coolapk](https://img.shields.io/badge/Follow-Coolapk-3DDC84?style=flat-square&logo=android&logoColor=white)](http://www.coolapk.com/u/38407386)
 [<img src="https://img.shields.io/badge/Join-QQ%20Group-blue?style=flat-square&logo=github&logoColor=white">](https://qm.qq.com/q/PZIFvlcbqU)
 [![SukiSU](https://img.shields.io/badge/SukiSU-Supported-5AA300?style=flat-square)](https://sukisu.org/)
-[![ReSukiSU](https://img.shields.io/badge/ReSukiSU-Supported-5AA300?style=flat-square)](https://resukisu.github.io/)
+[![BakaSU](https://img.shields.io/badge/BakaSU-Supported-5AA300?style=flat-square)](https://bakasu.org/)
 [![SUSFS](https://img.shields.io/badge/SUSFS-Integrated-E67E22?style=flat-square)](https://gitlab.com/simonpunk/susfs4ksu)
 
 **English** | [简体中文](#chinese)
@@ -37,7 +37,7 @@ Built upon [AnyKernel3](https://github.com/osm0sis/AnyKernel3), this repository 
 
 | Feature | Description |
 |:---|:---|
-| 🔐 KernelSU Variants | Supports SukiSU / ReSukiSU variants, selectable at build time |
+| 🔐 KernelSU Variants | Supports SukiSU / BakaSU variants, selectable at build time |
 | 🙈 SUSFS | Kernel-level hiding working with KSU to complete environment spoofing |
 | 💾 ZRAM LZ4 | ZRAM Compression Algorithm Patch |
 | 🛡️ BBG (Baseband Guard) | BBG patch to protect the baseband partitions from accidental wipe |
@@ -55,7 +55,7 @@ Built upon [AnyKernel3](https://github.com/osm0sis/AnyKernel3), this repository 
 2. Go to the **Actions** page and pick the workflow for your kernel version
 3. Click **Run workflow** and fill in the parameters as needed:
    - `android_version` / `kernel_version` / `sub_level` / `os_patch_level`
-   - `ksu_variant`: KernelSU variant (SukiSU / ReSukiSU)
+   - `ksu_variant`: KernelSU variant (SukiSU / BakaSU)
    - Feature switches: `enable_susfs`, `use_zram`, `use_bbg`, `use_net_enhance`, `use_kpm`, `skip_incompatible`, etc.
 4. Once the build finishes, download the **Artifacts** from the run page:
    - `AnyKernel3.zip` — flashable zip (recommended; flash via custom Recovery or KSU)
@@ -91,7 +91,7 @@ A commit is a hash string representing the state of a repository at a certain po
 
 - [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3)
 - [zzh20188/GKI_KernelSU_SUSFS](https://github.com/zzh20188/GKI_KernelSU_SUSFS) / [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS)
-- [SukiSU](https://sukisu.org/) / [ReSukiSU](https://resukisu.github.io/)
+- [SukiSU](https://sukisu.org/) / [BakaSU](https://bakasu.org/)
 - [SUSFS](https://gitlab.com/simonpunk/susfs4ksu)
 
 <div align="center">
@@ -124,7 +124,7 @@ A commit is a hash string representing the state of a repository at a certain po
 
 # GKI KernelSU SUSFS
 
-**自动化构建 GKI 内核 | 集成 SukiSU/ReSukiSU + SUSFS**
+**自动化构建 GKI 内核 | 集成 SukiSU/BakaSU + SUSFS**
 
 [English](#gki-kernelsu-susfs) | **简体中文**
 
@@ -152,7 +152,7 @@ A commit is a hash string representing the state of a repository at a certain po
 
 | 特性 | 说明 |
 |:---|:---|
-| 🔐 KernelSU 变体 | 支持 SukiSU / ReSukiSU 变体，构建时按需选择 |
+| 🔐 KernelSU 变体 | 支持 SukiSU / BakaSU 变体，构建时按需选择 |
 | 🙈 SUSFS | 内核级隐藏，配合 KSU 完成环境伪装 |
 | 💾 ZRAM LZ4 | ZRAM 压缩算法补丁 |
 | 🛡️ BBG 基带保护 | BBG（BaseBand Guard）补丁，保护基带分区，防止基带被意外擦除 |
@@ -170,7 +170,7 @@ A commit is a hash string representing the state of a repository at a certain po
 2. 进入 **Actions** 页面，选择对应内核版本的工作流
 3. 点击 **Run workflow**，按需填写参数：
    - `android_version` / `kernel_version` / `sub_level` / `os_patch_level`
-   - `ksu_variant`：KernelSU 变体（SukiSU / ReSukiSU）
+   - `ksu_variant`：KernelSU 变体（SukiSU / BakaSU）
    - 功能开关：`enable_susfs`、`use_zram`、`use_bbg`、`use_net_enhance`、`use_kpm`、`skip_incompatible` 等 
 4. 构建完成后，在本次运行页面下载 **Artifacts**：
    - `AnyKernel3.zip` —— 卡刷包（推荐，配合自定义 Recovery 或 KSU 刷入）
@@ -207,7 +207,7 @@ A commit is a hash string representing the state of a repository at a certain po
 
 - [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3)
 - [zzh20188/GKI_KernelSU_SUSFS](https://github.com/zzh20188/GKI_KernelSU_SUSFS) / [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS)
-- [SukiSU](https://sukisu.org/) / [ReSukiSU](https://resukisu.github.io/)
+- [SukiSU](https://sukisu.org/) / [BakaSU](https://bakasu.org/)
 - [SUSFS](https://gitlab.com/simonpunk/susfs4ksu)
 
 <div align="center">

@@ -15,8 +15,8 @@ cp "$SUSFS4KSU"/kernel_patches/fs/* ./common/fs/
 cp "$SUSFS4KSU"/kernel_patches/include/linux/* ./common/include/linux/
 
 case "$KSU_VARIANT" in
-  "SukiSU"|"ReSukiSU")
-    echo "SukiSU/ReSukiSU 使用内置 SUSFS 支持"
+  "SukiSU"|"BakaSU")
+    echo "SukiSU/BakaSU 使用内置 SUSFS 支持"
     ;;
 esac
 
@@ -153,9 +153,9 @@ if [[ -f fs/proc/task_mmu.c.rej ]] \
   fi
 fi
 
-# 为尚未提供 SU 会话 FD 接口的 SukiSU/ReSukiSU 恢复旧版 exec hook 行为
+# 为尚未提供 SU 会话 FD 接口的 SukiSU/BakaSU 恢复旧版 exec hook 行为
 EXEC_HELPER=""
-if [[ "$KSU_VARIANT" == SukiSU* || "$KSU_VARIANT" == "ReSukiSU" ]]; then
+if [[ "$KSU_VARIANT" == SukiSU* || "$KSU_VARIANT" == "BakaSU" ]]; then
   if grep -qF 'ksu_install_su_fd();' fs/exec.c; then
     EXEC_HELPER="ksu_install_su_fd"
   elif grep -qF 'ksu_handle_post_execveat_sucompat(' fs/exec.c; then

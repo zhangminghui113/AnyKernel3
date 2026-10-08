@@ -196,8 +196,8 @@ on:
         type: choice
         options:
           - SukiSU
-          - ReSukiSU
-        default: ReSukiSU
+          - BakaSU
+        default: BakaSU
 
       # ==================== 可选配置 ====================
       version:
@@ -404,7 +404,7 @@ jobs:
       revision: "r1"
       ksu_variant: ${{ inputs.kernelsu_variant }}
       # 内核侧 KernelSU 检出到官方最新上传 Manager 构建的同一提交，
-      # 使内核 KSU 版本与拉取的管理器安装包严格一致（ReSukiSU 生效）
+      # 使内核 KSU 版本与拉取的管理器安装包严格一致（BakaSU 生效）
       ksu_commit: ${{ needs.get-ksu-manager.outputs.ksuCommit }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
