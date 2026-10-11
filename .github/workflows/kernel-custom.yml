@@ -197,6 +197,7 @@ on:
         options:
           - SukiSU
           - BakaSU
+          - FinaSU
         default: BakaSU
 
       # ==================== 可选配置 ====================
@@ -404,8 +405,10 @@ jobs:
       revision: "r1"
       ksu_variant: ${{ inputs.kernelsu_variant }}
       # 内核侧 KernelSU 检出到官方最新上传 Manager 构建的同一提交，
-      # 使内核 KSU 版本与拉取的管理器安装包严格一致（BakaSU 生效）
+      # 使内核 KSU 版本与拉取的管理器安装包严格一致（BakaSU / FinaSU 生效）
       ksu_commit: ${{ needs.get-ksu-manager.outputs.ksuCommit }}
+      ksu_cert_size: ${{ needs.get-ksu-manager.outputs.managerCertSize }}
+      ksu_cert_hash: ${{ needs.get-ksu-manager.outputs.managerCertHash }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}

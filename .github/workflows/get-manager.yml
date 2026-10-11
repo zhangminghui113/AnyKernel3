@@ -26,6 +26,14 @@ on:
         description: "官方最新上传 Manager 构建对应的提交 SHA（内核侧对齐用）"
         value: ${{ jobs.get_ksu_manager.outputs.ksuCommit }}
 
+      managerCertSize:
+        description: "FinaSU 管理器签名证书 DER 尺寸（0x 十六进制，内核第二信任槽对齐用）"
+        value: ${{ jobs.get_ksu_manager.outputs.managerCertSize }}
+
+      managerCertHash:
+        description: "FinaSU 管理器签名证书 SHA256（内核第二信任槽对齐用）"
+        value: ${{ jobs.get_ksu_manager.outputs.managerCertHash }}
+
 jobs:
   get_ksu_manager:
     runs-on: ubuntu-latest
@@ -38,6 +46,9 @@ jobs:
       managerVer: ${{ steps.add_KSU.outputs.managerVer }}
       # 输出4: 官方最新上传构建的提交 SHA（内核侧对齐用）
       ksuCommit: ${{ steps.add_KSU.outputs.ksuCommit }}
+      # 输出5/6: FinaSU 管理器签名证书（内核第二信任槽对齐用）
+      managerCertSize: ${{ steps.add_KSU.outputs.managerCertSize }}
+      managerCertHash: ${{ steps.add_KSU.outputs.managerCertHash }}
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
@@ -45,6 +56,9 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: 检出脚本仓库
+        uses: actions/checkout@v7
+
       - name: 安装依赖
         run: |
           sudo apt-get update
@@ -60,6 +74,9 @@ jobs:
           elif [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
             echo "This is the BakaSU variant"
             git clone https://github.com/Baka-SU/BakaSU.git KernelSU
+          elif [ "${{ inputs.kernelsu_variant }}" == "FinaSU" ]; then
+            echo "This is the FinaSU variant"
+            git clone https://github.com/LyraVoid/FinaSU.git KernelSU
           else
             echo "Unknown variant"
             exit 1
@@ -72,6 +89,9 @@ jobs:
 
           if [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
             KSU_VERSION=$((40000 + KSU_GIT_VERSION - 2815))
+          elif [ "${{ inputs.kernelsu_variant }}" == "FinaSU" ]; then
+            # FinaSU 内核 Kbuild 与管理器 build.gradle.kts 均以 30000 + git 提交数计算版本
+            KSU_VERSION=$((30000 + KSU_GIT_VERSION))
           else
             KSU_VERSION=$((30700 + KSU_GIT_VERSION))
           fi
@@ -95,10 +115,17 @@ jobs:
             echo "SukiSU..."
             REPO="SukiSU-Ultra/SukiSU-Ultra"
             KSUM="manager"
+            EXPECTED_BRANCH="main"
           elif [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
             echo "BakaSU..."
             REPO="Baka-SU/BakaSU"
             KSUM="manager"
+            EXPECTED_BRANCH="main"
+          elif [ "${{ inputs.kernelsu_variant }}" == "FinaSU" ]; then
+            echo "FinaSU..."
+            REPO="LyraVoid/FinaSU"
+            KSUM="manager"
+            EXPECTED_BRANCH="master"
           fi
 
           FILENAME="build-manager.yml"
@@ -128,7 +155,7 @@ jobs:
             else
               FROM=$(date -u -d "today - $DAYS days" +%Y-%m-%d)
             fi
-            echo "检索 $FROM ~ $TODAY 期间官方 main 分支 push 构建..."
+            echo "检索 $FROM ~ $TODAY 期间官方 $EXPECTED_BRANCH 分支 push 构建..."
             for PAGE in 1 2 3; do
               RUNS=""
               for ATTEMPT in 1 2 3; do
@@ -148,9 +175,10 @@ jobs:
                 HEAD_BRANCH=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].head_branch")
                 EVENT=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].event")
                 CREATED=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].created_at")
-                # 只认官方 main 分支 push 上传的构建，跳过 PR / 其他分支构建
-                if [ "$HEAD_BRANCH" != "main" ] || [ "$EVENT" != "push" ]; then
-                  echo "跳过构建 $BUILD_ID ($HEAD_BRANCH/$EVENT): 非官方 main push 构建"
+                # 只认官方默认分支 push 上传的构建，跳过 PR / 其他分支构建
+                #（SukiSU/BakaSU 为 main，FinaSU 为 master）
+                if [ "$HEAD_BRANCH" != "$EXPECTED_BRANCH" ] || [ "$EVENT" != "push" ]; then
+                  echo "跳过构建 $BUILD_ID ($HEAD_BRANCH/$EVENT): 非官方 $EXPECTED_BRANCH 分支 push 构建"
                   continue
                 fi
                 printf '%s\t%s\t%s\n' "$CREATED" "$BUILD_ID" "$HEAD_SHA" >> "$CAND_FILE"
@@ -163,23 +191,23 @@ jobs:
 
           if [ ! -s "$CAND_FILE" ]; then
             rm -f "$CAND_FILE"
-            echo "未找到官方 main 分支 push 上传的 Manager 构建。"
+            echo "未找到官方 $EXPECTED_BRANCH 分支 push 上传的 Manager 构建。"
             exit 1
           fi
           # sort -u 去重（窗口扩大后会重复收集），按创建时间降序（最新优先）
           CAND_COUNT=$(sort -u -t$'\t' -k1,1r "$CAND_FILE" | wc -l)
-          echo "共找到 $CAND_COUNT 个官方 main push 构建，从最新开始逐个下载（以 APK 文件名实测版本）..."
+          echo "共找到 $CAND_COUNT 个官方 $EXPECTED_BRANCH 分支 push 构建，从最新开始逐个下载（以 APK 文件名实测版本）..."
 
           while IFS=$'\t' read -r CREATED BUILD_ID HEAD_SHA; do
             ARTIFACTS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/$REPO/actions/runs/$BUILD_ID/artifacts")
             CANDIDATE_LIST=$(get_manager_artifacts "$ARTIFACTS")
             if [ -z "$CANDIDATE_LIST" ]; then
-              echo "跳过构建 $BUILD_ID (main, $CREATED): 未找到包含 '$KSUM' 的产物"
+              echo "跳过构建 $BUILD_ID ($EXPECTED_BRANCH, $CREATED): 未找到包含 '$KSUM' 的产物"
               continue
             fi
 
-            echo "下载构建 $BUILD_ID (main, $CREATED, ${HEAD_SHA:0:8}) 的产物..."
+            echo "下载构建 $BUILD_ID ($EXPECTED_BRANCH, $CREATED, ${HEAD_SHA:0:8}) 的产物..."
             rm -rf manager-artifacts
             mkdir -p manager-artifacts
             while IFS=$'\t' read -r NAME URL; do
@@ -201,14 +229,14 @@ jobs:
               APK_FILE=$(find manager-artifacts -type f -name "*release.apk" ! -name "*debug*" | head -n 1)
             fi
             if [ -z "$APK_FILE" ]; then
-              echo "跳过构建 $BUILD_ID (main, $CREATED): artifact 中无 release APK"
+              echo "跳过构建 $BUILD_ID ($EXPECTED_BRANCH, $CREATED): artifact 中无 release APK"
               continue
             fi
             # 先剥离 ABI 段再提取版本，避免 x86_64 的 "_64" 等数字尾巴被误当成 versionCode
             CLEAN_NAME=$(basename "$APK_FILE" | sed -E 's/-(arm64-v8a|armeabi-v7a|armv7|riscv64|x86_64|x86|universal)-release\.apk$/.apk/')
             ACTUAL_VERSION=$(echo "$CLEAN_NAME" | grep -oE '_[0-9]+' | tail -n 1 | tr -d '_')
             if ! [[ "$ACTUAL_VERSION" =~ ^[0-9]+$ ]]; then
-              echo "跳过构建 $BUILD_ID (main, $CREATED): 无法从 APK 文件名解析版本 ($(basename "$APK_FILE"))"
+              echo "跳过构建 $BUILD_ID ($EXPECTED_BRANCH, $CREATED): 无法从 APK 文件名解析版本 ($(basename "$APK_FILE"))"
               continue
             fi
 
@@ -220,17 +248,18 @@ jobs:
           rm -f "$CAND_FILE"
 
           if [ -z "$MANAGER_VERSION" ]; then
-            echo "未获取到官方 main 分支最新上传的 Manager artifact。"
+            echo "未获取到官方 $EXPECTED_BRANCH 分支最新上传的 Manager artifact。"
             exit 1
           fi
-          echo "选择 Manager 构建 $MANAGER_BUILD_ID (main, ${MANAGER_HEAD_SHA:0:8}), APK 实测版本 $MANAGER_VERSION"
-          # 内核侧将对齐到该构建的同一提交（BakaSU：直接检出；SukiSU：改写版本来源 REPO_BRANCH），
-          # 因此对比"该提交对应的 KSU 版本"而非 main HEAD 的版本
+          echo "选择 Manager 构建 $MANAGER_BUILD_ID ($EXPECTED_BRANCH, ${MANAGER_HEAD_SHA:0:8}), APK 实测版本 $MANAGER_VERSION"
+          # 内核侧将对齐到该构建的同一提交（BakaSU/FinaSU：直接检出；SukiSU：改写版本来源 REPO_BRANCH），
+          # 因此对比"该提交对应的 KSU 版本"而非默认分支 HEAD 的版本
           PIN_COUNT=$(git -C KernelSU rev-list --count "$MANAGER_HEAD_SHA" 2>/dev/null || echo "")
           if [ -n "$PIN_COUNT" ]; then
             case "${{ inputs.kernelsu_variant }}" in
               BakaSU) PINNED_KSU_VERSION=$((30700 + PIN_COUNT)) ;;
               SukiSU) PINNED_KSU_VERSION=$((40000 + PIN_COUNT - 2815)) ;;
+              FinaSU) PINNED_KSU_VERSION=$((30000 + PIN_COUNT)) ;;
               *)      PINNED_KSU_VERSION="" ;;
             esac
             if [ -n "$PINNED_KSU_VERSION" ]; then
@@ -257,6 +286,25 @@ jobs:
               exit 1
             fi
             find manager-artifacts -type f -name "*.apk" -print
+          fi
+
+          if [ "${{ inputs.kernelsu_variant }}" == "FinaSU" ]; then
+            # 从本次分发的管理器 APK 提取签名证书（DER），供内核侧第二信任槽
+            # （EXPECTED_SIZE2/EXPECTED_HASH2）对齐。FinaSU 的内核只信任槽内
+            # 签名的管理器，不注入证书时内核会转而信任上游 KernelSU 默认槽，
+            # 导致 root 被官方 KernelSU 管理器抢占、FinaSU 管理器显示"未安装"。
+            # 解析器复用仓库脚本，避免 heredoc 缩进踩坑。
+            echo "从管理器 APK 提取签名证书..."
+            CERT_INFO=$(python3 "$GITHUB_WORKSPACE/scripts/finasu_compat/extract_manager_cert.py" "$APK_FILE" | head -n1)
+            if [ -z "$CERT_INFO" ]; then
+              echo "::warning::未能从 FinaSU 管理器 APK 提取签名证书，内核侧将回退到最新 Release APK 提取"
+              exit 0
+            fi
+            CERT_SIZE=$(echo "$CERT_INFO" | awk '{print $1}')
+            CERT_HASH=$(echo "$CERT_INFO" | awk '{print $2}')
+            echo "管理器签名证书: size=$CERT_SIZE sha256=$CERT_HASH"
+            echo "managerCertSize=$CERT_SIZE" >> $GITHUB_OUTPUT
+            echo "managerCertHash=$CERT_HASH" >> $GITHUB_OUTPUT
           fi
 
       - name: 添加 SUSFS 模块

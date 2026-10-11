@@ -14,6 +14,7 @@ on:
         options:
           - SukiSU
           - BakaSU
+          - FinaSU
         default: BakaSU
       version:
         description: "自定义版本名 (可选)"
@@ -154,6 +155,18 @@ on:
         type: string
         default: ""
 
+      ksu_cert_size:
+        description: "FinaSU 管理器签名证书 DER 尺寸（从 main.yml 传入；直接触发时自动取本工作流拉取的管理器证书）"
+        required: false
+        type: string
+        default: ""
+
+      ksu_cert_hash:
+        description: "FinaSU 管理器签名证书 SHA256（从 main.yml 传入；直接触发时自动取本工作流拉取的管理器证书）"
+        required: false
+        type: string
+        default: ""
+
 jobs:
   build-kernels-a13-5-15:
     name: "5.15.${{ matrix.display_sub || matrix.sub_level }}-${{ matrix.os_patch_level }}"
@@ -215,6 +228,8 @@ jobs:
       os_patch_level: ${{ matrix.os_patch_level }}
       ksu_variant: ${{ inputs.kernelsu_variant }}
       ksu_commit: ${{ inputs.ksu_commit || needs.get-ksu-manager.outputs.ksuCommit }}
+      ksu_cert_size: ${{ inputs.ksu_cert_size || needs.get-ksu-manager.outputs.managerCertSize }}
+      ksu_cert_hash: ${{ inputs.ksu_cert_hash || needs.get-ksu-manager.outputs.managerCertHash }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}

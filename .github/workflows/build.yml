@@ -35,6 +35,16 @@ on:
         required: false
         type: string
         default: ""
+      ksu_cert_size:
+        description: "FinaSU 专用：管理器签名证书 DER 尺寸（0x 十六进制，第二信任槽对齐用）"
+        required: false
+        type: string
+        default: ""
+      ksu_cert_hash:
+        description: "FinaSU 专用：管理器签名证书 SHA256（第二信任槽对齐用）"
+        required: false
+        type: string
+        default: ""
 
       # ==================== 可选配置 ====================
       version:
@@ -435,6 +445,9 @@ jobs:
             "BakaSU")
               BRANCH="-s main"
               ;;
+            "FinaSU")
+              BRANCH="-s master"
+              ;;
             "SukiSU")
               if [ "${{ inputs.enable_susfs }}" = "false" ]; then
                 BRANCH="-s main"
@@ -468,6 +481,8 @@ jobs:
         working-directory: ${{ env.KERNEL_ROOT }}
         env:
           KSU_COMMIT: ${{ inputs.ksu_commit }}
+          KSU_CERT_SIZE: ${{ inputs.ksu_cert_size }}
+          KSU_CERT_HASH: ${{ inputs.ksu_cert_hash }}
         run: |
           case "${{ inputs.ksu_variant }}" in
             "SukiSU")
@@ -524,6 +539,84 @@ jobs:
               fi
               bash "$GITHUB_WORKSPACE/scripts/ksu_post_setup.sh" KernelSU bakasu
               ;;
+            "FinaSU")
+              echo "添加 ${{ inputs.ksu_variant }}..."
+              git clone https://github.com/LyraVoid/FinaSU.git KernelSU
+              # 内核侧 KernelSU 检出到官方最新上传 Manager 构建的同一提交
+              #（Kbuild 以 30000 + git 提交数 计算版本，与官方管理器 versionCode 同源同值），
+              # 保证内核 KSU 版本与拉取的管理器安装包严格一致
+              if [ -n "$KSU_COMMIT" ]; then
+                if ! git -C KernelSU checkout --detach "$KSU_COMMIT" 2>/dev/null; then
+                  git -C KernelSU fetch origin "$KSU_COMMIT"
+                  git -C KernelSU checkout --detach "$KSU_COMMIT"
+                fi
+                if [ "$(git -C KernelSU rev-parse HEAD)" != "$KSU_COMMIT" ]; then
+                  echo "::error::KernelSU 检出官方构建提交 $KSU_COMMIT 失败，无法对齐管理器版本"
+                  exit 1
+                fi
+                echo "KernelSU 已检出到官方上传构建提交 $KSU_COMMIT (KSU 版本 $((30000 + $(git -C KernelSU rev-list --count HEAD))))"
+              fi
+              # FinaSU 自带的 kernel/setup.sh 仍克隆上游 tiann/KernelSU，此处手动完成
+              # in-tree 集成：软链驱动目录并挂载 Makefile / Kconfig
+              DRIVER_DIR="$KERNEL_ROOT/common/drivers"
+              ln -sfn "$(realpath --relative-to="$DRIVER_DIR" "$KERNEL_ROOT/KernelSU/kernel")" "$DRIVER_DIR/kernelsu"
+              grep -q "obj-.*CONFIG_KSU.*kernelsu/" "$DRIVER_DIR/Makefile" || \
+                echo 'obj-$(CONFIG_KSU) += kernelsu/' >> "$DRIVER_DIR/Makefile"
+              if ! grep -q 'source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig"; then
+                sed -i "/endmenu/i source \"drivers/kernelsu/Kconfig\"" "$DRIVER_DIR/Kconfig"
+              fi
+              # SUSFS 场景下的内核侧集成补丁由 scripts/finasu_compat/apply.sh 在后续步骤应用
+
+              # 将 FinaSU 官方管理器签名证书注入内核第二信任槽（EXPECTED_SIZE2/HASH2）。
+              # 不注入时内核仅信任上游 KernelSU 默认槽，官方 KernelSU 管理器会抢占
+              # manager 身份，FinaSU 管理器显示"未安装"。
+              if [ -z "$KSU_CERT_SIZE" ] || [ -z "$KSU_CERT_HASH" ]; then
+                echo "管理器证书未由 get-manager 传入，回退到 FinaSU 最新 Release APK 提取..."
+                REL_APK=$(mktemp -d)/manager.apk
+                REL_JSON=""
+                for ATTEMPT in 1 2 3; do
+                  REL_JSON=$(curl -s --fail --max-time 30 \
+                    "https://api.github.com/repos/LyraVoid/FinaSU/releases/latest") \
+                    && [ -n "$REL_JSON" ] && break
+                  echo "获取 Release 信息失败，重试 ($ATTEMPT/3)..."
+                  sleep 5
+                done
+                REL_URL=$(printf '%s' "$REL_JSON" | python3 -c \
+                  "import json,sys; d=json.load(sys.stdin); print(next(a['browser_download_url'] for a in d.get('assets',[]) if a['name'].endswith('.apk')))" 2>/dev/null || true)
+                if [ -z "$REL_URL" ]; then
+                  echo "::error::无法获取 FinaSU 管理器签名证书：get-manager 未传入且最新 Release 中没有 APK 资产，FinaSU 管理器将无法被内核识别"
+                  exit 1
+                fi
+                curl -sL --fail --retry 3 --max-time 300 -o "$REL_APK" "$REL_URL" || {
+                  echo "::error::下载 FinaSU Release APK 失败，无法提取管理器签名证书"
+                  exit 1
+                }
+                CERT_INFO=$(python3 "$GITHUB_WORKSPACE/scripts/finasu_compat/extract_manager_cert.py" "$REL_APK" | head -n1)
+                KSU_CERT_SIZE=$(echo "$CERT_INFO" | awk '{print $1}')
+                KSU_CERT_HASH=$(echo "$CERT_INFO" | awk '{print $2}')
+              fi
+              if [ -z "$KSU_CERT_SIZE" ] || [ -z "$KSU_CERT_HASH" ]; then
+                echo "::error::FinaSU 管理器签名证书提取失败，FinaSU 管理器将无法被内核识别"
+                exit 1
+              fi
+              echo "注入 FinaSU 管理器签名证书到内核第二信任槽: size=$KSU_CERT_SIZE sha256=$KSU_CERT_HASH"
+              awk -v size="$KSU_CERT_SIZE" -v hash="$KSU_CERT_HASH" '
+                !done && /^ccflags-y \+= -DEXPECTED_HASH=/ {
+                  print
+                  print "# injected by GKI_FinaSU_SUSFS: trust the official FinaSU manager via the second signature slot"
+                  print "KSU_EXPECTED_SIZE2 := " size
+                  print "KSU_EXPECTED_HASH2 := " hash
+                  print "KSU_SECOND_SIGNATURE_RELEASE := 1"
+                  done = 1
+                  next
+                }
+                { print }
+              ' KernelSU/kernel/Kbuild > KernelSU/kernel/Kbuild.new && mv KernelSU/kernel/Kbuild.new KernelSU/kernel/Kbuild
+              grep -q "^KSU_EXPECTED_SIZE2 := " KernelSU/kernel/Kbuild \
+                && grep -q "^KSU_EXPECTED_HASH2 := " KernelSU/kernel/Kbuild \
+                && grep -q "^KSU_SECOND_SIGNATURE_RELEASE := 1" KernelSU/kernel/Kbuild \
+                || { echo "::error::Kbuild 注入失败（锚点行缺失，FinaSU 上游 Kbuild 结构可能已变化）"; exit 1; }
+              ;;
             *)
               echo "未知变体: ${{ inputs.ksu_variant }}" >&2
               exit 1
@@ -536,6 +629,14 @@ jobs:
           else
             echo "KSU_LATEST_COMMIT_DATE=未知" >> $GITHUB_ENV
           fi
+
+      # FinaSU master 在 susfs4ksu 官方集成补丁基准后有结构性提交，
+      # 上游 10_enable 补丁需配合本仓库维护的 drift-fixes 才能命中，
+      # 详见 scripts/finasu_compat/apply.sh 头部说明
+      - name: 应用 FinaSU 内核 SUSFS 集成补丁
+        if: inputs.ksu_variant == 'FinaSU' && inputs.enable_susfs
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: bash "$GITHUB_WORKSPACE/scripts/finasu_compat/apply.sh" KernelSU
 
       # SukiSU 的 builtin 分支（内建+SUSFS 产品线）与 main 分支相互独立，
       # UAPI 版本落后于官方管理器（管理器按 main 分支构建，UAPI 5）。
@@ -1255,6 +1356,15 @@ jobs:
                 echo "错误: 已请求启用 KPM，但当前 KernelSU 代码未声明 CONFIG_KPM" >&2
                 exit 1
               fi
+            fi
+          elif [ "${{ inputs.ksu_variant }}" == "FinaSU" ]; then
+            if [[ "${{ inputs.use_kpm }}" == enabled* ]] || [[ "${{ inputs.use_kpm }}" == patched* ]]; then
+              echo "::warning title=KPM 不适用::FinaSU 不支持 KPM，已忽略该选项继续构建"
+              if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+                echo "> ⏭️ **KPM** 已忽略：FinaSU 变体不支持 KPM（构建未中断）" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              echo "KPM_SKIPPED=true" >> "$GITHUB_ENV"
             fi
           fi
 

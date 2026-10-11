@@ -18,6 +18,9 @@ case "$KSU_VARIANT" in
   "SukiSU"|"BakaSU")
     echo "SukiSU/BakaSU 使用内置 SUSFS 支持"
     ;;
+  "FinaSU")
+    echo "FinaSU 使用 susfs4ksu 官方内核侧集成补丁（10_enable + drift-fixes 已在前置步骤应用）"
+    ;;
 esac
 
 cd "$KERNEL_ROOT/common"
@@ -155,7 +158,7 @@ fi
 
 # 为尚未提供 SU 会话 FD 接口的 SukiSU/BakaSU 恢复旧版 exec hook 行为
 EXEC_HELPER=""
-if [[ "$KSU_VARIANT" == SukiSU* || "$KSU_VARIANT" == "BakaSU" ]]; then
+if [[ "$KSU_VARIANT" == SukiSU* || "$KSU_VARIANT" == "BakaSU" || "$KSU_VARIANT" == "FinaSU" ]]; then
   if grep -qF 'ksu_install_su_fd();' fs/exec.c; then
     EXEC_HELPER="ksu_install_su_fd"
   elif grep -qF 'ksu_handle_post_execveat_sucompat(' fs/exec.c; then
@@ -181,13 +184,17 @@ fi
 # 上游 5.10 主补丁把 susfs_sus_kstat_spoof_vfs_statfs 的 extern 声明放在了
 # fs/statfs.c 的使用点之后（vfs_statfs 之前），clang -Werror 报隐式声明；
 # 声明属于 SUSFS 接口，直接补进公共头 include/linux/susfs_def.h：
-# 不依赖 statfs.c 内锚点与行号比较，声明重复合法，上游后续自行修复也不冲突
+# 不依赖 statfs.c 内锚点与行号比较，声明重复合法，上游后续自行修复也不冲突。
+# 注意：FinaSU 的 setuid_hook.c / sucompat.c 会在仅有 <linux/types.h> 等基础
+# 头文件时就包含 susfs_def.h，此时 struct kstatfs 尚未声明，原型内引入新
+# struct 标签会触发 clang -Werror,-Wvisibility（上游内核构建日志实证），
+# 因此必须连同 struct 前置声明一起插入。
 SUSFS_DEF_H="$KERNEL_ROOT/common/include/linux/susfs_def.h"
 if [[ -f fs/statfs.c ]] && grep -qF 'susfs_sus_kstat_spoof_vfs_statfs(' fs/statfs.c \
   && [[ -f "$SUSFS_DEF_H" ]] \
   && ! grep -qF 'susfs_sus_kstat_spoof_vfs_statfs(' "$SUSFS_DEF_H"; then
   echo "将 susfs_sus_kstat_spoof_vfs_statfs 声明补入 include/linux/susfs_def.h"
-  sed -i '/^#endif \/\/ #ifndef KSU_SUSFS_DEF_H$/i extern int susfs_sus_kstat_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse);' "$SUSFS_DEF_H"
+  sed -i '/^#endif \/\/ #ifndef KSU_SUSFS_DEF_H$/i struct inode;\nstruct kstatfs;\nextern int susfs_sus_kstat_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse);' "$SUSFS_DEF_H"
 fi
 
 # 上游 susfs.c 直接调用 security_sb_statfs 却没有包含 linux/security.h，
