@@ -82,13 +82,6 @@ A commit is a hash string representing the state of a repository at a certain po
 - SUSFS: [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (GitLab → Repository → Commits)
 - SukiSU: [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/commits) (GitHub commit history page)
 
-## 🧩 FinaSU Variant Notes
-
-- Kernel source follows [LyraVoid/FinaSU](https://github.com/LyraVoid/FinaSU) `master`; the in-tree KSU version equals the official manager `versionCode` (`30000 + commit count`), aligned automatically to the latest uploaded manager build.
-- SUSFS integration uses the official `10_enable_susfs_for_ksu.patch` from [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) plus the drift fixes maintained in [`scripts/finasu_compat/`](scripts/finasu_compat/). If FinaSU upstream restructures its kernel tree, the drift patch must be regenerated against the new `master`.
-- KPM is not supported by FinaSU and the `use_kpm` option is ignored for this variant.
-- The manager APK is fetched from FinaSU's own CI (`build-manager.yml` on the `master` branch); the kernel automatically trusts that manager via its signing certificate (second signature slot), so root is granted to the FinaSU manager rather than falling back to the stock KernelSU manager.
-
 ## 🛠️ Recommended After Installation
 ### 🔧 Xposed Modules
 | Module | Description |
@@ -203,13 +196,6 @@ A commit is a hash string representing the state of a repository at a certain po
 
 - SUSFS：[susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu)（GitLab → Repository → Commits）
 - SukiSU：[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra/commits)（GitHub 提交历史页面）
-
-## 🧩 FinaSU 变体说明
-
-- 内核源码跟随 [LyraVoid/FinaSU](https://github.com/LyraVoid/FinaSU) `master`，内核侧 KSU 版本与官方管理器 `versionCode` 同源（`30000 + 提交数`），构建时自动对齐最新上传的管理器构建。
-- SUSFS 集成采用 [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) 官方 `10_enable_susfs_for_ksu.patch`，并叠加本仓库维护的漂移修复（[`scripts/finasu_compat/`](scripts/finasu_compat/)）。FinaSU 上游内核结构变化时需基于新 `master` 重新生成漂移补丁。
-- FinaSU 不支持 KPM，该变体下 `use_kpm` 选项会被忽略。
-- 管理器 APK 直接拉取 FinaSU 官方 CI（`master` 分支的 `build-manager.yml`）产物，并自动从该 APK 提取签名证书注入内核第二信任槽（`EXPECTED_SIZE2/HASH2`），确保 root 授予 FinaSU 管理器而不是回退到上游 KernelSU 管理器。
 
 ## 🛠️ 安装后推荐
 ### 🔧 Xposed 模块

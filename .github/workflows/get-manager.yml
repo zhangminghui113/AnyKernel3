@@ -130,6 +130,60 @@ jobs:
 
           FILENAME="build-manager.yml"
 
+          if [ "${{ inputs.kernelsu_variant }}" == "FinaSU" ]; then
+            # FinaSU 只使用官方 GitHub Releases：
+            #   1) 管理器 = 最新 Release 的 APK（不拉取 CI 构建产物）
+            #   2) 内核 = 该 Release tag 对应的提交（build.yml 检出 ksuCommit）
+            # 两者同源同值（Kbuild 与管理器 versionCode 均为 30000 + 提交数），
+            # 证书直接取自该 Release APK，保证与实际分发的管理器严格一致。
+            echo "获取 FinaSU 最新 Release..."
+            REL_JSON=""
+            for ATTEMPT in 1 2 3; do
+              REL_JSON=$(curl -s --fail --max-time 30                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}"                 "https://api.github.com/repos/LyraVoid/FinaSU/releases/latest")                 && [ -n "$REL_JSON" ] && break
+              echo "获取 Release 信息失败，重试 ($ATTEMPT/3)..."
+              sleep 5
+            done
+            if [ -z "$REL_JSON" ]; then
+              echo "::warning::无法获取 FinaSU 最新 Release 信息，本次跳过管理器与证书对齐（内核回退 master + Release APK 证书）"
+              exit 0
+            fi
+            REL_TAG=$(printf '%s' "$REL_JSON" | jq -r '.tag_name')
+            REL_APK_URL=$(printf '%s' "$REL_JSON" | jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n1)
+            REL_COMMIT=$(curl -s --fail --max-time 30               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}"               "https://api.github.com/repos/LyraVoid/FinaSU/commits/$REL_TAG" | jq -r '.sha')
+            if [ -z "$REL_APK_URL" ] || [ "$REL_APK_URL" = "null" ] || [ -z "$REL_COMMIT" ] || [ "$REL_COMMIT" = "null" ]; then
+              echo "::warning::Release $REL_TAG 中没有 APK 资产或无法解析提交，本次跳过管理器与证书对齐"
+              exit 0
+            fi
+            echo "下载 Release 管理器: $REL_TAG ($REL_COMMIT)"
+            mkdir -p manager-artifacts
+            REL_APK="manager-artifacts/$(basename "$REL_APK_URL")"
+            curl -sL --fail --retry 3 --max-time 300 -o "$REL_APK" "$REL_APK_URL" || {
+              echo "::warning::下载 Release 管理器失败，本次跳过管理器与证书对齐"
+              exit 0
+            }
+            CLEAN_NAME=$(basename "$REL_APK" | sed -E 's/-(arm64-v8a|armeabi-v7a|armv7|riscv64|x86_64|x86|universal)-release\.apk$/.apk/')
+            MANAGER_VERSION=$(echo "$CLEAN_NAME" | grep -oE '_[0-9]+' | tail -n 1 | tr -d '_')
+            if ! [[ "$MANAGER_VERSION" =~ ^[0-9]+$ ]]; then
+              echo "::warning::无法从 Release APK 文件名解析版本 ($(basename "$REL_APK"))，本次跳过管理器与证书对齐"
+              exit 0
+            fi
+            echo "从 Release 管理器 APK 提取签名证书..."
+            CERT_INFO=$(python3 "$GITHUB_WORKSPACE/scripts/finasu_compat/extract_manager_cert.py" "$REL_APK" | head -n1)
+            if [ -z "$CERT_INFO" ]; then
+              echo "::warning::未能从 Release 管理器 APK 提取签名证书，内核侧将回退 Release APK 证书提取"
+              exit 0
+            fi
+            CERT_SIZE=$(echo "$CERT_INFO" | awk '{print $1}')
+            CERT_HASH=$(echo "$CERT_INFO" | awk '{print $2}')
+            echo "Release: $REL_TAG, 管理器版本 $MANAGER_VERSION, 证书 size=$CERT_SIZE sha256=$CERT_HASH"
+            echo "MANAGER_VERSION=$MANAGER_VERSION" >> $GITHUB_ENV
+            echo "managerVer=$MANAGER_VERSION" >> $GITHUB_OUTPUT
+            echo "ksuCommit=$REL_COMMIT" >> $GITHUB_OUTPUT
+            echo "managerCertSize=$CERT_SIZE" >> $GITHUB_OUTPUT
+            echo "managerCertHash=$CERT_HASH" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           get_manager_artifacts() {
             local artifacts="$1"
             if [ "${{ inputs.kernelsu_variant }}" == "BakaSU" ]; then
@@ -288,25 +342,7 @@ jobs:
             find manager-artifacts -type f -name "*.apk" -print
           fi
 
-          if [ "${{ inputs.kernelsu_variant }}" == "FinaSU" ]; then
-            # 从本次分发的管理器 APK 提取签名证书（DER），供内核侧第二信任槽
-            # （EXPECTED_SIZE2/EXPECTED_HASH2）对齐。FinaSU 的内核只信任槽内
-            # 签名的管理器，不注入证书时内核会转而信任上游 KernelSU 默认槽，
-            # 导致 root 被官方 KernelSU 管理器抢占、FinaSU 管理器显示"未安装"。
-            # 解析器复用仓库脚本，避免 heredoc 缩进踩坑。
-            echo "从管理器 APK 提取签名证书..."
-            CERT_INFO=$(python3 "$GITHUB_WORKSPACE/scripts/finasu_compat/extract_manager_cert.py" "$APK_FILE" | head -n1)
-            if [ -z "$CERT_INFO" ]; then
-              echo "::warning::未能从 FinaSU 管理器 APK 提取签名证书，内核侧将回退到最新 Release APK 提取"
-              exit 0
-            fi
-            CERT_SIZE=$(echo "$CERT_INFO" | awk '{print $1}')
-            CERT_HASH=$(echo "$CERT_INFO" | awk '{print $2}')
-            echo "管理器签名证书: size=$CERT_SIZE sha256=$CERT_HASH"
-            echo "managerCertSize=$CERT_SIZE" >> $GITHUB_OUTPUT
-            echo "managerCertHash=$CERT_HASH" >> $GITHUB_OUTPUT
-          fi
-
+          # FinaSU 已在上面的 Release 分支提前退出，不会走到 CI 产物流程。
       - name: 添加 SUSFS 模块
         id: add_SUSFS
         continue-on-error: true
