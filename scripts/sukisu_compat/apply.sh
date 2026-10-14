@@ -121,6 +121,30 @@ else
   echo "builtin 同步遗留问题不存在或已修复，跳过"
 fi
 
+# builtin 分支 2026-10-14 合入 PR #3871（pkg_observer 延迟 track_throne 到
+# task_work，c8959206）时，pkg_observer.c 两处以
+# track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS) 调用，但 builtin 的
+# track_throne() 仍为 bool prune_only 形参，TRACK_THRONE_FORCE_SYNCHRONOUS
+# 未在任何头文件定义（BakaSU 的 flags 版 throne_tracker API 未随补丁同步），
+# ksu.c 聚合编译报：
+#   error: use of undeclared identifier 'TRACK_THRONE_FORCE_SYNCHRONOUS'
+# main 分支同函数即 track_throne(false)（false=全量扫描，非 prune-only），
+# builtin 的 fsnotify 路径同样需要全量扫描，依此替换；上游修复后按内容
+# 检测自动跳过，幂等。
+PKG_OBS_FILE="$KSU_DIR/kernel/manager/pkg_observer.c"
+if [ -f "$PKG_OBS_FILE" ] && grep -q 'track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS)' "$PKG_OBS_FILE"; then
+  echo "应用 pkg_observer 修复 (builtin PR #3871 引用未定义的 TRACK_THRONE_FORCE_SYNCHRONOUS)..."
+  sed -i 's/track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS)/track_throne(false)/g' "$PKG_OBS_FILE" \
+    || fail "pkg_observer.c track_throne 修复失败"
+  ! grep -q 'TRACK_THRONE_FORCE_SYNCHRONOUS' "$PKG_OBS_FILE" \
+    || fail "pkg_observer.c TRACK_THRONE_FORCE_SYNCHRONOUS 修复后校验失败"
+  grep -q 'track_throne(false)' "$PKG_OBS_FILE" \
+    || fail "pkg_observer.c track_throne(false) 修复后校验失败"
+  echo "pkg_observer.c: 未定义的 TRACK_THRONE_FORCE_SYNCHRONOUS 已替换为 track_throne(false)"
+else
+  echo "pkg_observer.c 未引用 TRACK_THRONE_FORCE_SYNCHRONOUS，跳过"
+fi
+
 # ---- Seccomp 过滤模式（builtin 分支）----
 # 背景：builtin 分支在 app 启动路径（zygote setresuid 钩子）对管理器与授权
 # 应用直接调用 disable_seccomp()，管理器进程自身的 seccomp 过滤器被清除，
