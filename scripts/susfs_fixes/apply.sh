@@ -201,7 +201,8 @@ open(hk, "w", encoding="utf-8", errors="surrogateescape").write(_hs)
 #   因此 extern 声明必须与调用一起改成 8 参（新 FinaSU 的定义是 8 参）。
 for _lab, _f in (("selinuxfs", fs), ("hooks", hk)):
     _s = open(_f, encoding="utf-8", errors="surrogateescape").read()
-    _s, _n2 = _re.subn(r"(security_context_to_sid_with_policy\(backup_sepolicy,[^;]*?, GFP_KERNEL)\)", r"\1, NULL, NULL)", _s)
+    # (?!, NULL, NULL) 保证幂等：<6.6 已由上文 _sub 切成 8 参的调用不再重复追加
+    _s, _n2 = _re.subn(r"(security_context_to_sid_with_policy\(backup_sepolicy,[^;]*?, GFP_KERNEL)\)(?!, NULL, NULL)", r"\1, NULL, NULL)", _s)
     _s, _nd = _re.subn(r"(security_context_to_sid_with_policy\(struct selinux_policy \*policy, const char \*scontext, u32 scontext_len,\s*\n\s*u32 \*sid, u32 def_sid, gfp_t gfp_flags)\);", r"\1, u32 *orig_sid_p, int *orig_rc_p);", _s)
     open(_f, "w", encoding="utf-8", errors="surrogateescape").write(_s)
     print("%s: _with_policy 8-arg normalize=%d decl=%d" % (_lab, _n2, _nd))
