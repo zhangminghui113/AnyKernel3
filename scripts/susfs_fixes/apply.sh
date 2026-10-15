@@ -125,6 +125,84 @@ fi
 
 patch -p1 < "$SUSFS_PATCH" || true
 
+# ==================== SukiSU builtin 新 selinux_hide 模型适配（services.c 跳板符号） ====================
+# SukiSU-Ultra builtin 2026-05-29 (5fb0c079) 同步 tiann/KernelSU 的 SELinux 新检测
+# 修复后，feature/selinux_hide.c 在 >=6.6 分支把 security_dump_masked_av_fn /
+# context_struct_compute_av_fn 声明为 extern 函数——上游预期由 services.c 补丁提供
+# 这两个跳板符号（builtin c32094a4 提交说明），但 SUSFS 主补丁只在 services.c 提供
+# my_security_compute_av_user，不含这两个符号，导致 6.6/6.12 全部 SUSFS 构建在
+# vmlinux 链接阶段报：
+#   ld.lld: error: undefined symbol: context_struct_compute_av_fn
+# 在 services.c 末尾补上两个跳板（对同名 static 函数的薄封装，与上游预期形态一致）；
+# 仅当检测到 builtin 的 extern 引用且 services.c 尚无跳板时追加，
+# 上游自行提供后按内容检测自动跳过，幂等。
+KSU_HIDE_FILE="$KERNEL_ROOT/KernelSU/kernel/feature/selinux_hide.c"
+SEC_SERVICES="security/selinux/ss/services.c"
+if [ -f "$KSU_HIDE_FILE" ] && grep -q 'extern void context_struct_compute_av_fn' "$KSU_HIDE_FILE" \
+  && [ -f "$SEC_SERVICES" ] && ! grep -q 'void context_struct_compute_av_fn(' "$SEC_SERVICES"; then
+  if ! grep -q 'static void context_struct_compute_av(' "$SEC_SERVICES"; then
+    echo "::error::services.c 缺少 static context_struct_compute_av，无法生成 SukiSU 跳板符号"
+    exit 1
+  fi
+  echo "补齐 SukiSU builtin selinux_hide 所需的 services.c 跳板符号..."
+  python3 - "$SEC_SERVICES" <<'PYEOF'
+import sys
+
+path = sys.argv[1]
+src = open(path, encoding="utf-8", errors="surrogateescape").read()
+if "void context_struct_compute_av_fn(" in src:
+    sys.exit(0)
+tramp = (
+    "\n"
+    "/* Trampolines for SukiSU-Ultra builtin selinux_hide (KSU_SUSFS builds):\n"
+    " * kernel/feature/selinux_hide.c (>=6.6 model) declares *_fn as extern;\n"
+    " * provide thin wrappers around the static implementations here. */\n"
+    "#ifdef CONFIG_KSU_SUSFS\n"
+    "void context_struct_compute_av_fn(struct policydb *policydb,\n"
+    "\t\t\t\t  struct context *scontext,\n"
+    "\t\t\t\t  struct context *tcontext,\n"
+    "\t\t\t\t  u16 tclass,\n"
+    "\t\t\t\t  struct av_decision *avd,\n"
+    "\t\t\t\t  struct extended_perms *xperms);\n"
+    "void context_struct_compute_av_fn(struct policydb *policydb,\n"
+    "\t\t\t\t  struct context *scontext,\n"
+    "\t\t\t\t  struct context *tcontext,\n"
+    "\t\t\t\t  u16 tclass,\n"
+    "\t\t\t\t  struct av_decision *avd,\n"
+    "\t\t\t\t  struct extended_perms *xperms)\n"
+    "{\n"
+    "\tcontext_struct_compute_av(policydb, scontext, tcontext, tclass, avd, xperms);\n"
+    "}\n"
+)
+if "static void security_dump_masked_av(" in src:
+    tramp += (
+        "\n"
+        "void security_dump_masked_av_fn(struct policydb *policydb,\n"
+        "\t\t\t\tstruct context *scontext,\n"
+        "\t\t\t\tstruct context *tcontext,\n"
+        "\t\t\t\tu16 tclass,\n"
+        "\t\t\t\tu32 permissions,\n"
+        "\t\t\t\tconst char *reason);\n"
+        "void security_dump_masked_av_fn(struct policydb *policydb,\n"
+        "\t\t\t\tstruct context *scontext,\n"
+        "\t\t\t\tstruct context *tcontext,\n"
+        "\t\t\t\tu16 tclass,\n"
+        "\t\t\t\tu32 permissions,\n"
+        "\t\t\t\tconst char *reason)\n"
+        "{\n"
+        "\tsecurity_dump_masked_av(policydb, scontext, tcontext, tclass, permissions, reason);\n"
+        "}\n"
+    )
+else:
+    print("::warning::services.c 缺少 static security_dump_masked_av，跳过对应跳板")
+tramp += "#endif /* CONFIG_KSU_SUSFS */\n"
+open(path, "w", encoding="utf-8", errors="surrogateescape").write(src + tramp)
+print("%s: appended *_fn trampolines" % path)
+PYEOF
+  grep -q 'void context_struct_compute_av_fn(' "$SEC_SERVICES" \
+    || { echo "::error::services.c 跳板符号追加后校验失败"; exit 1; }
+  echo "services.c: 已提供 context_struct_compute_av_fn / security_dump_masked_av_fn"
+fi
 
 # ==================== FinaSU 新 selinux_hide 模型适配 ====================
 # 自 FinaSU v0.1.0-preview1 起，kernel/feature/selinux_hide.c 换成了 tiann 新形态：

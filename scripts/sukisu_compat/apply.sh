@@ -180,4 +180,74 @@ else
   echo "lsm_hook.c 无 builtin setresuid 路径（main 分支已内置过滤模式），跳过 seccomp 过滤模式补丁"
 fi
 
+# builtin 分支 2026-10-15 合入 PR #987（动态多管理器签名授权，a2339013）时，
+# supercall.h 的 UAPI 常量声明有两处笔误（main 分支同名代码是正确写法）：
+#   1) 新 ioctl 常量错用已存在的 KSU_IOCTL_KPM（_IOC('K',200)），
+#      正确名称是 KSU_IOCTL_MANAGER（dispatch.c 的处理表引用它），同名重复
+#      声明在匿名 enum 里直接报 "redefinition of enumerator 'KSU_IOCTL_KPM'"；
+#   2) _IOWR 第三个参数少了 struct 关键字——_IOWR 展开为 sizeof(ksu_manager_cmd)，
+#      裸 tag 名不是类型，报 "use of undeclared identifier 'ksu_manager_cmd'"。
+# 全平台构建在 ksu.c 聚合编译阶段命中。依 main 分支 uapi/supercall.h 的
+# KSU_IOCTL_MANAGER = _IOWR('K', 106, struct ksu_manager_cmd) 修正；
+# 上游自行修复后按内容检测自动跳过，幂等。
+UAPI_FILE="$KSU_DIR/kernel/include/uapi/supercall.h"
+if [ -f "$UAPI_FILE" ] && grep -q "DECLARE(__u32, KSU_IOCTL_KPM, _IOWR" "$UAPI_FILE" \
+  && ! grep -q 'KSU_IOCTL_MANAGER,' "$UAPI_FILE"; then
+  echo "应用 supercall.h 管理器 ioctl 修复 (PR #987 常量名笔误 + 缺 struct 关键字)..."
+  sed -i "s|^DECLARE(__u32, KSU_IOCTL_KPM, _IOWR('K', 106, .*\$|DECLARE(__u32, KSU_IOCTL_MANAGER, _IOWR('K', 106, struct ksu_manager_cmd));|" "$UAPI_FILE" \
+    || fail "supercall.h KSU_IOCTL_MANAGER 修复失败"
+  grep -q "DECLARE(__u32, KSU_IOCTL_MANAGER, _IOWR('K', 106, struct ksu_manager_cmd));" "$UAPI_FILE" \
+    || fail "supercall.h KSU_IOCTL_MANAGER 修复后校验失败"
+  [ "$(grep -c 'DECLARE(__u32, KSU_IOCTL_KPM,' "$UAPI_FILE")" -eq 1 ] \
+    || fail "supercall.h KSU_IOCTL_KPM 重复声明未消除"
+  echo "supercall.h: KSU_IOCTL_MANAGER 已按 main 分支写法补齐，KSU_IOCTL_KPM 重复声明已消除"
+else
+  echo "supercall.h 无 PR #987 的 KSU_IOCTL_KPM 笔误，跳过"
+fi
+
+# builtin 分支 PR #987 同时引入 throne_tracker.c 的 crown_manager() 两处问题：
+#   1) a2339013 形态：get_pkg_from_apk_path 解析失败分支写了裸 return;（非 void
+#      函数），clang -Wreturn-type 报错；且未定义返回值时调用方按未定值处理，
+#      若碰巧 >0 会让扫描提前终止。按文档契约（返回 0 = 本候选无效、未观察到
+#      内置候选、继续扫描；-1 需 state->seen 已置位，此处不成立）补为 return 0;。
+#      c95d6e2c 已自行修复此分支（改为 "apk dir path" + return 0;），自动跳过。
+#   2) c95d6e2c 形态：签名改为 (apk, apk_dir, ..., sig_fallback) 后，pkg 数组
+#      被移进 if (sig_fallback) 块内声明，而函数尾部的动态管理器扫描循环
+#      (strncmp(np->package, pkg, ...)) 仍在块外引用——所有平台报
+#      "use of undeclared identifier 'pkg'"。把声明上提到函数声明块并初始化为
+#      KSU_PACKAGE_NAME（sig_fallback=false 时跳过内置包名条目，与 fallback
+#      分支"跳过已处理候选"的语义一致；fallback 路径 get_pkg_* 会覆盖它）。
+# 上游修复后按内容检测自动跳过，幂等。
+THRONE_FILE="$KSU_DIR/kernel/manager/throne_tracker.c"
+if [ -f "$THRONE_FILE" ] && grep -q 'static int crown_manager' "$THRONE_FILE" \
+  && grep -A1 'Failed to get package name from apk path' "$THRONE_FILE" | grep -q '^[[:space:]]*return;[[:space:]]*$'; then
+  echo "应用 throne_tracker.c crown_manager 返回值修复 (PR #987 裸 return;)..."
+  sed -i '/Failed to get package name from apk path/{n;s/^\([[:space:]]*\)return;[[:space:]]*$/\1return 0;/}' "$THRONE_FILE" \
+    || fail "throne_tracker.c crown_manager 返回值修复失败"
+  grep -A1 'Failed to get package name from apk path' "$THRONE_FILE" | grep -q 'return 0;' \
+    || fail "throne_tracker.c crown_manager 返回值修复后校验失败"
+  ! grep -A1 'Failed to get package name from apk path' "$THRONE_FILE" | grep -q '^[[:space:]]*return;[[:space:]]*$' \
+    || fail "throne_tracker.c 裸 return 未消除"
+  echo "throne_tracker.c: crown_manager 解析失败分支已补 return 0;"
+else
+  echo "throne_tracker.c 无 crown_manager 裸 return，跳过"
+fi
+
+if [ -f "$THRONE_FILE" ] && grep -q '^        char pkg\[KSU_MAX_PACKAGE_NAME\];$' "$THRONE_FILE" \
+  && grep -q 'strncmp(np->package, pkg, KSU_MAX_PACKAGE_NAME)' "$THRONE_FILE" \
+  && ! grep -q 'char pkg\[KSU_MAX_PACKAGE_NAME\] = ' "$THRONE_FILE"; then
+  echo "应用 throne_tracker.c crown_manager pkg 作用域修复 (c95d6e2c 块外引用)..."
+  sed -i '/^        char pkg\[KSU_MAX_PACKAGE_NAME\];$/d' "$THRONE_FILE" \
+    || fail "throne_tracker.c pkg 内层声明删除失败"
+  sed -i 's/^    bool builtin_crowned_this_call = false;$/    bool builtin_crowned_this_call = false;\n    char pkg[KSU_MAX_PACKAGE_NAME] = KSU_PACKAGE_NAME;/' "$THRONE_FILE" \
+    || fail "throne_tracker.c pkg 声明上提失败"
+  grep -q 'char pkg\[KSU_MAX_PACKAGE_NAME\] = KSU_PACKAGE_NAME;' "$THRONE_FILE" \
+    || fail "throne_tracker.c pkg 声明上提后校验失败"
+  ! grep -q '^        char pkg\[KSU_MAX_PACKAGE_NAME\];$' "$THRONE_FILE" \
+    || fail "throne_tracker.c pkg 内层声明未消除"
+  echo "throne_tracker.c: pkg 已上提到函数作用域并以 KSU_PACKAGE_NAME 初始化"
+else
+  echo "throne_tracker.c 无 crown_manager pkg 作用域问题，跳过"
+fi
+
 echo "SukiSU API 兼容补丁处理完成"
