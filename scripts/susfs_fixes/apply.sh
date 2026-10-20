@@ -7,6 +7,8 @@
 # 调用前必须将工作目录设为 $KERNEL_ROOT
 set -eo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "应用 SUSFS 补丁..."
 
 SUSFS_PATCH="50_add_susfs_in_gki-$ANDROID_VERSION-$KERNEL_VERSION.patch"
@@ -71,11 +73,10 @@ if [[ "$ANDROID_VERSION" == "android13" && "$KERNEL_VERSION" == "5.15" ]]; then
     fi
     adjust_legacy_fdinfo_context
   fi
-  if [[ "$OS_PATCH_LEVEL" == "lts" ]]; then
-    echo "临时调整 Android 13 5.15 LTS 头文件上下文"
-    sed -i '/^#include <trace\/hooks\/blk.h>$/d' fs/namespace.c
-    sed -i '/^#include <trace\/hooks\/mm.h>$/d' fs/proc/task_mmu.c
-  fi
+  # 5.15.220(LTS) 原生含 #include <trace/hooks/{mm,blk}.h>。上游 rebase 后
+  # 主补丁已把这两行当作 susfs_def.h 插入 hunk 的上下文，旧版「先删后补」的
+  # 临时调整反而会让 hunk 整段被拒，故不再删除；缺失上下文的版本由
+  # normalize_trace_ctx.py 归一化补丁副本处理。
 fi
 
 if [[ "$ANDROID_VERSION" == "android14" && "$KERNEL_VERSION" == "6.1" ]]; then
@@ -182,6 +183,12 @@ if grep -q '^ static int thaw_super_locked' "$SUSFS_PATCH" \
   SUPER_FS_H_REMOVED=1
 fi
 
+# 上游 rebase 到 5.15.211 后，susfs_def.h 的插入 hunk 把 trace/hooks 头文件
+# 当成了上下文：5.15.74~194 源码没有这些行，hunk 会整段被拒，最终因
+# SUSFS_IS_INODE_* 隐式声明在 clang -Werror 处中断。按源码实际内容归一化补丁副本。
+echo "归一化 SUSFS 头文件上下文"
+python3 "$SCRIPT_DIR/normalize_trace_ctx.py" "$SUSFS_PATCH"
+
 patch -p1 < "$SUSFS_PATCH" || true
 
 # ==================== SukiSU builtin 新 selinux_hide 模型适配（services.c 跳板符号） ====================
@@ -262,6 +269,20 @@ PYEOF
     || { echo "::error::services.c 跳板符号追加后校验失败"; exit 1; }
   echo "services.c: 已提供 context_struct_compute_av_fn / security_dump_masked_av_fn"
 fi
+
+# ==================== KernelSU 缺失的 SUSFS 内联钩子符号（6.6+/6.12 主补丁形态）====================
+# 6.6/6.12 主补丁在 security/selinux/{hooks,selinuxfs}.c 内联改写调用点，要求 KernelSU 侧
+# 以全局符号提供 my_setprocattr / my_write_context / my_write_access；并在 fs/exec.c 调用
+# ksu_setup_preinit_file / ksu_preinit_handle_post_execveat（受 KSU_NO_PREINIT 开关控制）。
+# SukiSU-Ultra（builtin 5ef32ad / main 31255c4）两者都不提供，KPM+SUSFS 的 6.12 构建在
+# vmlinux 链接阶段报：
+#   ld.lld: error: undefined symbol: my_setprocattr / my_write_context / my_write_access
+#   ld.lld: error: undefined symbol: ksu_setup_preinit_file / ksu_preinit_handle_post_execveat
+# 处理：按 KernelSU 实际能力裁剪（SELinux 包装函数回落到内核原生处理函数、preinit 走主补丁
+# 自带开关），保留 SUSFS 其余功能；KernelSU 上游补齐后脚本按内容检测自动跳过，幂等。
+echo "按 KernelSU 实际能力裁剪 SUSFS 内联钩子..."
+python3 "$SCRIPT_DIR/ksu_susfs_hooks.py" "$KERNEL_ROOT" \
+  || { echo "::error::SUSFS 内联钩子裁剪失败"; exit 1; }
 
 # ==================== FinaSU 新 selinux_hide 模型适配 ====================
 # 自 FinaSU v0.1.0-preview1 起，kernel/feature/selinux_hide.c 换成了 tiann 新形态：
@@ -794,3 +815,14 @@ if [[ "$ANDROID_VERSION" == "android16" && "$KERNEL_VERSION" == "6.12" ]]; then
     echo "已修复 setuid_hook.c 重复定义问题"
   fi
 fi
+
+# 守护：主补丁若再次因上下文漂移漏掉 susfs_def.h，在这里给出可读错误，
+# 而不是等到编译 fs/proc/task_mmu.c 时才报一串 SUSFS_IS_INODE_* 隐式声明
+for SUSFS_SRC in fs/proc/task_mmu.c fs/namespace.c; do
+  [[ -f "$SUSFS_SRC" ]] || continue
+  if grep -qE 'SUSFS_IS_INODE_|CL_COPY_MNT_NS' "$SUSFS_SRC" \
+    && ! grep -qF '#include <linux/susfs_def.h>' "$SUSFS_SRC"; then
+    echo "::error::$SUSFS_SRC 使用了 SUSFS 宏但缺少 linux/susfs_def.h，主补丁 hunk 未应用"
+    exit 1
+  fi
+done
