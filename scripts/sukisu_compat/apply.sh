@@ -106,4 +106,34 @@ else
   echo "lsm_hook.c 无 builtin setresuid 路径（main 分支已内置过滤模式），跳过 seccomp 过滤模式补丁"
 fi
 
+# ---- clang fall-through annotation ----
+# builtin 的 policy/allowlist.c 使用注释形式 fall-through；bazel GKI
+# 构建开启 -Werror,-Wimplicit-fallthrough 时会直接报错。改用内核
+# fallthrough 宏（展开为 __attribute__((__fallthrough__))），上游修复后自动跳过。
+if grep -rqF '/* fall through */' "$KSU_DIR/kernel" 2>/dev/null; then
+  echo "修正 SukiSU 源码的注释式 fall-through（bazel -Werror 兼容）..."
+  python3 - "$KSU_DIR" <<'PYEOF'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1]) / "kernel"
+for path in sorted(root.rglob("*.c")):
+    text = path.read_text(encoding="utf-8", errors="surrogateescape")
+    if "/* fall through */" not in text:
+        continue
+    path.write_text(
+        text.replace("/* fall through */", "fallthrough;"),
+        encoding="utf-8",
+        errors="surrogateescape",
+    )
+    print(f"  {path}")
+PYEOF
+  if grep -rqF '/* fall through */' "$KSU_DIR/kernel" 2>/dev/null; then
+    fail "fall-through 注解修正后仍有残留"
+  fi
+  echo "fall-through 注解修正完成"
+else
+  echo "SukiSU 源码无注释式 fall-through，跳过"
+fi
+
 echo "SukiSU API 兼容补丁处理完成"
